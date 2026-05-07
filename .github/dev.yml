@@ -1,0 +1,223 @@
+name: Prod
+
+on:
+  push:
+    branches:
+      - main
+      - development
+      - dev
+
+
+env:
+  AWS_REGION: eu-west-1
+  ECR_REPOSITORY: Vantium-fineract-service
+  HELM_REPO_NAME: k8s-infrastructure
+  HELM_REPO_ORG: Vantium
+  SERVICE_NAME: fineract
+  AWS_ACCESS_KEY_ID: ${{ github.ref == 'refs/heads/main' && secrets.AWS_ACCESS_KEY_ID || secrets.AWS_ACCESS_KEY_ID_DEV }}
+  AWS_SECRET_ACCESS_KEY: ${{ github.ref == 'refs/heads/main' && secrets.AWS_SECRET_ACCESS_KEY || secrets.AWS_SECRET_ACCESS_KEY_DEV }}
+
+jobs:
+  build-and-push:
+    name: Build and Push to ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+      image-uri: ${{ steps.build-image.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Ensure git tag exists for versioning
+        run: |
+          if [ -z "$(git tag -l)" ]; then
+            echo "No tags found, creating initial tag for versioning..."
+            git tag v1.0.0
+          fi
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu' # Use Zulu as recommended by Fineract
+          java-version: '21'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+        # --- Step to Download Gradle Wrapper JAR ---
+      - name: Ensure Gradle Wrapper Directory Exists
+        run: mkdir -p gradle/wrapper
+
+      - name: Download Gradle Wrapper JAR
+        run: |
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "Gradle wrapper JAR not found, downloading..."
+            wget --no-check-certificate -P gradle/wrapper https://github.com/apache/fineract/raw/develop/gradle/wrapper/gradle-wrapper.jar
+          else
+            echo "Gradle wrapper JAR already exists."
+          fi
+          # --- End of Download Steps ---
+
+      - name: Download PostgreSQL JDBC Driver
+        run: curl -O https://jdbc.postgresql.org/download/postgresql-42.7.5.jar
+
+      - name: Verify Gradle Wrapper
+        run: |
+          ls -l gradle/wrapper/gradle-wrapper.jar
+          file gradle/wrapper/gradle-wrapper.jar
+
+      - name: Grant Execute Permissions to Gradle Wrapper
+        run: chmod +x gradlew
+
+      - name: Build Fineract JAR
+        run: ./gradlew clean bootJar
+
+      - name: Verify Build
+        run: |
+          ls -a fineract-provider/build/libs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Confirm repository is available
+        uses: int128/create-ecr-repository-action@v1
+        with:
+          repository: ${{ env.ECR_REPOSITORY }}
+          public: false
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=raw,value=${{ github.run_number }}-${{ github.sha }}
+            type=raw,value=${{ github.run_number }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Image digest
+        run: |
+          echo "Image pushed: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}"
+          echo "IMAGE_TAG=${{ steps.meta.outputs.version }}" >> $GITHUB_ENV
+
+  update-helm-chart:
+    name: Update Helm Chart
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HELM_REPO_ORG }}/${{ env.HELM_REPO_NAME }}
+          token: ${{ secrets.REPO_TOKEN }}
+          path: infrastructure
+          ref: main
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update Helm values file
+        run: |
+          cd infrastructure/corebanking-stack/${{ env.SERVICE_NAME }}
+
+          VALUES_FILE="values.yaml"
+
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
+          IMAGE_TAG="${{ needs.build-and-push.outputs.image-tag }}"
+
+          echo "Updating $VALUES_FILE with image: $IMAGE_URI:$IMAGE_TAG"
+
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+          yq eval ".image.repository = \"$IMAGE_URI\"" -i $VALUES_FILE
+          yq eval ".image.tag = \"$IMAGE_TAG\"" -i $VALUES_FILE
+
+          echo "Updated files:"
+          cat $VALUES_FILE | grep -A 2 "image:"
+
+      - name: Commit and push changes
+        run: |
+          cd infrastructure
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add corebanking-stack/${{ env.SERVICE_NAME }}/values*.yaml
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update ${{ env.SERVICE_NAME }} image to ${{ needs.build-and-push.outputs.image-tag }} [production]
+
+            - Image: ${{ needs.build-and-push.outputs.image-uri }}
+            - Tag: ${{ needs.build-and-push.outputs.image-tag }}
+            - Environment: production
+            - Triggered by: ${{ github.actor }}"
+            - Source commit: ${{ github.sha }}"
+
+            git push origin main
+            echo "Changes pushed successfully"
+          fi
+
+      - name: Create deployment summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: ${{ needs.build-and-push.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image URI**: ${{ needs.build-and-push.outputs.image-uri }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
