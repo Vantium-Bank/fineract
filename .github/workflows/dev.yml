@@ -10,7 +10,7 @@ on:
 
 env:
   AWS_REGION: eu-west-1
-  ECR_REPOSITORY: Vantium-fineract-service
+  ECR_REPOSITORY: vantium-fineract-service
   HELM_REPO_NAME: k8s-infrastructure
   HELM_REPO_ORG: Vantium
   SERVICE_NAME: fineract
