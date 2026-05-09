@@ -155,7 +155,7 @@ jobs:
           repository: ${{ env.HELM_REPO_ORG }}/${{ env.HELM_REPO_NAME }}
           token: ${{ secrets.REPO_TOKEN }}
           path: infrastructure
-          ref: main
+          ref: dev
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -210,7 +210,7 @@ jobs:
             - Triggered by: ${{ github.actor }}"
             - Source commit: ${{ github.sha }}"
 
-            git push origin main
+            git push origin dev
             echo "Changes pushed successfully"
           fi
 
