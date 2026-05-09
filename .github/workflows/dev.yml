@@ -167,7 +167,7 @@ jobs:
 
       - name: Update Helm values file
         run: |
-          cd infrastructure/corebanking-stack/${{ env.SERVICE_NAME }}
+          cd infrastructure/corebanking/${{ env.SERVICE_NAME }}
 
           VALUES_FILE="values.yaml"
 
@@ -194,7 +194,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add corebanking-stack/${{ env.SERVICE_NAME }}/values*.yaml
+          git add corebanking/${{ env.SERVICE_NAME }}/values*.yaml
 
           if git diff --staged --quiet; then
             echo "No changes to commit"
