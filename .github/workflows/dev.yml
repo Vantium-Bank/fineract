@@ -172,7 +172,7 @@ jobs:
         run: |
           cd infrastructure/helm/corebanking/${{ env.SERVICE_NAME }}
 
-          VALUES_FILE="values.yaml"
+          VALUES_FILE="values-dev.yaml"
 
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
           IMAGE_TAG="${{ needs.build-and-push.outputs.image-tag }}"
