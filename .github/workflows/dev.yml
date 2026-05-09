@@ -12,7 +12,7 @@ env:
   AWS_REGION: eu-west-1
   ECR_REPOSITORY: vantium-fineract-service
   HELM_REPO_NAME: k8s-infrastructure
-  HELM_REPO_ORG: Vantium
+  HELM_REPO_ORG: Vantium-Bank
   SERVICE_NAME: fineract
   AWS_ACCESS_KEY_ID: ${{ github.ref == 'refs/heads/main' && secrets.AWS_ACCESS_KEY_ID || secrets.AWS_ACCESS_KEY_ID_DEV }}
   AWS_SECRET_ACCESS_KEY: ${{ github.ref == 'refs/heads/main' && secrets.AWS_SECRET_ACCESS_KEY || secrets.AWS_SECRET_ACCESS_KEY_DEV }}
