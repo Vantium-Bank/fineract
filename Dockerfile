@@ -24,7 +24,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy the built JAR (version is dynamic from git-versioning plugin)
-COPY fineract-provider/build/libs/fineract-provider-*.jar /app/fineract-provider.jar
+COPY fineract-provider-*.jar /app/fineract-provider.jar
 
 COPY postgresql-*.jar /app/
 
