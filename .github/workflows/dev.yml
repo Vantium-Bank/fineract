@@ -172,20 +172,33 @@ jobs:
         run: |
           cd infrastructure/helm/corebanking/${{ env.SERVICE_NAME }}
 
-          VALUES_FILE="values-dev.yaml"
+          # Determine which values file to update
+          if [[ "${{ steps.determine-env.outputs.environment }}" == "production" ]]; then
+            VALUES_FILE="values-production.yaml"
+          else
+            VALUES_FILE="values-test.yaml"
+          fi
 
+          # Get the full image URI
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
           IMAGE_TAG="${{ needs.build-and-push.outputs.image-tag }}"
 
+          # Update image repository and tag using yq
           echo "Updating $VALUES_FILE with image: $IMAGE_URI:$IMAGE_TAG"
 
+          # Install yq if not available
           if ! command -v yq &> /dev/null; then
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
           fi
 
+          # Update the values file
           yq eval ".image.repository = \"$IMAGE_URI\"" -i $VALUES_FILE
           yq eval ".image.tag = \"$IMAGE_TAG\"" -i $VALUES_FILE
+
+          # Also update values.yaml for consistency
+          yq eval ".image.repository = \"$IMAGE_URI\"" -i values.yaml
+          yq eval ".image.tag = \"$IMAGE_TAG\"" -i values.yaml
 
           echo "Updated files:"
           cat $VALUES_FILE | grep -A 2 "image:"
@@ -202,12 +215,12 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "chore: update ${{ env.SERVICE_NAME }} image to ${{ needs.build-and-push.outputs.image-tag }} [production]
+            git commit -m "chore: update ${{ env.SERVICE_NAME }} image to ${{ needs.build-and-push.outputs.image-tag }} [${{ steps.determine-env.outputs.environment }}]
 
             - Image: ${{ needs.build-and-push.outputs.image-uri }}
             - Tag: ${{ needs.build-and-push.outputs.image-tag }}
-            - Environment: production
-            - Triggered by: ${{ github.actor }}"
+            - Environment: ${{ steps.determine-env.outputs.environment }}
+            - Triggered by: ${{ github.actor }}
             - Source commit: ${{ github.sha }}"
 
             git push origin dev
@@ -219,7 +232,7 @@ jobs:
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Service**: ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment**: production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ steps.determine-env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Image Tag**: ${{ needs.build-and-push.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Image URI**: ${{ needs.build-and-push.outputs.image-uri }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit SHA**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
