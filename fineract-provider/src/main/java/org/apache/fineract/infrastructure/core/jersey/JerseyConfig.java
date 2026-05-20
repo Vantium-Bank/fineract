@@ -24,6 +24,8 @@ import jakarta.inject.Singleton;
 import jakarta.ws.rs.ApplicationPath;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.ext.Provider;
+import java.lang.annotation.Annotation;
+import java.util.Arrays;
 import org.apache.fineract.infrastructure.core.api.jersey.PageableParamProvider;
 import org.glassfish.jersey.internal.inject.AbstractBinder;
 import org.glassfish.jersey.server.ResourceConfig;
@@ -55,8 +57,12 @@ public class JerseyConfig extends ResourceConfig {
 
     @PostConstruct
     public void setup() {
-        appCtx.getBeansWithAnnotation(Path.class).values().forEach(component -> register(component.getClass()));
+        registerAnnotatedBeanTypes(Path.class);
+        registerAnnotatedBeanTypes(Provider.class);
+    }
 
-        appCtx.getBeansWithAnnotation(Provider.class).values().forEach(this::register);
+    private void registerAnnotatedBeanTypes(Class<? extends Annotation> annotationType) {
+        Arrays.stream(appCtx.getBeanNamesForAnnotation(annotationType)).map(appCtx::getType).filter(type -> type != null)
+                .forEach(this::register);
     }
 }
